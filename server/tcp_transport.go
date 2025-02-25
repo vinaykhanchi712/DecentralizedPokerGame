@@ -1,20 +1,15 @@
 package server
 
 import (
-	"bytes"
-	"io"
+	"encoding/gob"
 	"net"
 
 	"github.com/sirupsen/logrus"
 )
 
-type Message struct {
-	From    net.Addr
-	Payload io.Reader
-}
-
 type Peer struct {
-	conn net.Conn
+	conn     net.Conn
+	Outbound bool
 }
 
 func (p *Peer) Send(data []byte) error {
@@ -26,17 +21,16 @@ func (p *Peer) Send(data []byte) error {
 }
 
 func (p *Peer) ReadLoop(msgc chan *Message) {
-	buf := make([]byte, 1024)
+
 	for {
-		n, err := p.conn.Read(buf)
-		if err != nil {
+
+		msg := &Message{}
+		if err := gob.NewDecoder(p.conn).Decode(msg); err != nil {
+			logrus.Error("[tcp_transport]Error decoding message", err)
 			break
 		}
 
-		msgc <- &Message{
-			From:    p.conn.RemoteAddr(),
-			Payload: bytes.NewReader(buf[:n]),
-		}
+		msgc <- msg
 
 	}
 	// TODO : unregister this peer!!!
@@ -46,8 +40,8 @@ func (p *Peer) ReadLoop(msgc chan *Message) {
 type TCPTransport struct {
 	listenAddr string
 	listener   net.Listener
-	AddPeer    chan *Peer
-	DelPeer    chan *Peer
+	addPeer    chan *Peer
+	delPeer    chan *Peer
 }
 
 func NewTCPTransport(addr string) *TCPTransport {
@@ -71,9 +65,10 @@ func (t *TCPTransport) ListenAndAccept() error {
 			continue
 		}
 		peer := &Peer{
-			conn: conn,
+			conn:     conn,
+			Outbound: false,
 		}
-		t.AddPeer <- peer
+		t.addPeer <- peer
 	}
 
 	//return fmt.Errorf("Listener closed")

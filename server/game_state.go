@@ -1,9 +1,29 @@
 package server
 
-type Round uint32
+type GameStatus uint32
+
+func (g GameStatus) String() string {
+	switch g {
+	case Waiting:
+		return "WAITING"
+	case Dealing:
+		return "DEALING"
+	case PreFlop:
+		return "PREFLOP"
+	case Flop:
+		return "FLOP"
+	case Turn:
+		return "TURN"
+	case River:
+		return "RIVER"
+	default:
+		return "unknown"
+	}
+}
 
 const (
-	Dealing Round = iota
+	Waiting GameStatus = iota
+	Dealing
 	PreFlop
 	Flop
 	Turn
@@ -11,9 +31,14 @@ const (
 )
 
 type GameState struct {
-	Round uint32
+	isDealer   bool
+	GameStatus GameStatus
 }
 
 func NewGameState() *GameState {
 	return &GameState{}
+}
+
+func (g *GameState) loop() {
+	return
 }

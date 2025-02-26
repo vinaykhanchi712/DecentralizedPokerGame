@@ -5,6 +5,8 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -36,7 +38,8 @@ type ServerConfig struct {
 type Server struct {
 	ServerConfig //this is struct embedding
 	transport    *TCPTransport
-	peers        map[net.Addr]*Peer
+	peerLock     sync.RWMutex
+	peers        map[string]*Peer
 	addPeer      chan *Peer
 	msgChan      chan *Message
 	delPeer      chan *Peer
@@ -46,7 +49,7 @@ type Server struct {
 func NewServer(cnf ServerConfig) *Server {
 	s := &Server{
 		ServerConfig: cnf,
-		peers:        make(map[net.Addr]*Peer),
+		peers:        make(map[string]*Peer),
 		addPeer:      make(chan *Peer),
 		msgChan:      make(chan *Message),
 		delPeer:      make(chan *Peer),
@@ -74,45 +77,33 @@ func (s *Server) loop() {
 	for {
 		select {
 		case peer := <-s.delPeer:
-			addr := peer.conn.RemoteAddr()
+			addr := peer.listenAddr
 			delete(s.peers, addr)
 			logrus.Info("Player disconnected: ", addr)
 		case peer := <-s.addPeer:
 
-			if err := s.handShake(peer); err != nil {
-				logrus.Error("Error handshaking with peer ", peer.conn.RemoteAddr(), " with error:  ", err)
-				continue
-			}
-			//TODO checl max player and other logic
-
-			go peer.ReadLoop(s.msgChan)
-
-			if !peer.Outbound {
-				if err := s.SendHandshake(peer); err != nil {
-					logrus.Error("outbound error sending handshake to peer ", peer.conn.RemoteAddr(), " with error:  ", err)
-					peer.conn.Close()
-					delete(s.peers, peer.conn.RemoteAddr())
-					continue
-				}
-			}
-			s.peers[peer.conn.RemoteAddr()] = peer
-			logrus.Info("Handshake Sucessfull->New Player connected: ", peer.conn.RemoteAddr(), " to:", s.ListenAddr)
-
-			if err := s.sendPeerList(peer); err != nil {
-				logrus.Error("Error sending peer list to ", peer.conn.RemoteAddr(), " with error:  ", err)
+			if err := s.handleNewPeer(peer); err != nil {
+				logrus.Error("Error handling new peer", err)
 				continue
 			}
 
 		case msg := <-s.msgChan:
-			if err := s.handleMessage(msg); err != nil {
-				logrus.Error("Error handling message", err)
-			}
+			go func() {
+				if err := s.handleMessage(msg); err != nil {
+					logrus.Error("Error handling message", err)
+				}
+			}()
 		}
 	}
 }
 
 func (s *Server) Connect(addr string) error {
-	conn, err := net.Dial("tcp", addr)
+
+	if s.isInPeerList(addr) {
+		return nil
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 	if err != nil {
 		return err
 	}
@@ -139,27 +130,30 @@ func (s *Server) handleMessage(msg *Message) error {
 	return nil
 }
 
-func (s *Server) handShake(p *Peer) error {
+func (s *Server) handShake(p *Peer) (*Handshake, error) {
 	hs := &Handshake{}
 	if err := gob.NewDecoder(p.conn).Decode(hs); err != nil {
-		return err
+		return nil, err
 	}
 
 	if s.GameVariant != hs.GameVariant {
-		return fmt.Errorf("invalid game variant %s", hs.GameVariant.string())
+		return nil, fmt.Errorf("invalid game variant %s", hs.GameVariant.string())
 	}
 	if s.Version != hs.Version {
-		return fmt.Errorf("invalid game version %s", hs.Version)
+		return nil, fmt.Errorf("invalid game version %s", hs.Version)
 	}
+
+	p.listenAddr = hs.ListenAddr
 
 	logrus.WithFields(logrus.Fields{
 		"Peer":        p.conn.RemoteAddr(),
 		"GameVariant": hs.GameVariant.string(),
 		"Version":     hs.Version,
 		"GameStatus":  hs.GameStatus.String(),
+		"ListenAddr":  hs.ListenAddr,
 	}).Info("Received handshake from")
 
-	return nil
+	return hs, nil
 }
 
 func (s *Server) SendHandshake(p *Peer) error {
@@ -167,6 +161,7 @@ func (s *Server) SendHandshake(p *Peer) error {
 		GameVariant: s.GameVariant,
 		Version:     s.Version,
 		GameStatus:  s.GameState.GameStatus,
+		ListenAddr:  s.ListenAddr,
 	}
 
 	buf := new(bytes.Buffer)
@@ -186,12 +181,11 @@ func (s *Server) SendHandshake(p *Peer) error {
 
 func (s *Server) sendPeerList(p *Peer) error {
 	peerList := MessagePeerList{
-		Peers: make([]string, len(s.peers)),
+		Peers: s.GetPeers(),
 	}
-	itr := 0
-	for address := range s.peers {
-		peerList.Peers[itr] = address.String()
-		itr++
+
+	if len(peerList.Peers) == 0 {
+		return nil
 	}
 
 	msg := &Message{
@@ -211,14 +205,78 @@ func (s *Server) sendPeerList(p *Peer) error {
 	return p.Send(buf.Bytes())
 }
 
+func (s *Server) isInPeerList(addr string) bool {
+	for _, p := range s.peers {
+		if p.listenAddr == addr {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handlePeerList(l MessagePeerList) error {
-	for i := 0; i < len(l.Peers); i++ {
+	for i := range l.Peers {
+		logrus.WithFields(logrus.Fields{
+			"from": s.ListenAddr,
+			"to":   l.Peers[i],
+		}).Info("Dialing up connection ")
 		if err := s.Connect(l.Peers[i]); err != nil {
 			logrus.Error("failed to dial peer", err)
 			continue
 		}
 	}
 	return nil
+}
+
+func (s *Server) PeerConnectionList() []string {
+	result := []string{}
+	for _, p := range s.peers {
+		result = append(result, p.listenAddr)
+	}
+	return result
+}
+
+func (s *Server) handleNewPeer(peer *Peer) error {
+
+	_, err := s.handShake(peer)
+	if err != nil {
+		peer.conn.Close()
+		delete(s.peers, peer.listenAddr)
+		return fmt.Errorf("error handshaking with peer  %+v  with error: %+v  ", peer.conn.RemoteAddr(), err)
+	}
+	//TODO checl max player and other logic
+	go peer.ReadLoop(s.msgChan)
+
+	if !peer.Outbound {
+		if err := s.SendHandshake(peer); err != nil {
+			peer.conn.Close()
+			delete(s.peers, peer.listenAddr)
+			return fmt.Errorf("outbound error sending handshake to peer %+v  with error: %+v ", peer.conn.RemoteAddr(), err)
+		}
+		if err := s.sendPeerList(peer); err != nil {
+			return fmt.Errorf("error sending peer list to  %+v  with error: %+v  ", peer.conn.RemoteAddr(), err)
+		}
+	}
+	s.addPeerWithLock(peer)
+	logrus.Info("Handshake Sucessfull->New Player connected: ", peer.conn.RemoteAddr(), " to:", s.ListenAddr)
+	return nil
+}
+
+func (s *Server) addPeerWithLock(peer *Peer) {
+	s.peerLock.Lock()
+	defer s.peerLock.Unlock()
+	s.peers[peer.listenAddr] = peer
+}
+
+func (s *Server) GetPeers() []string {
+	s.peerLock.RLock()
+	defer s.peerLock.RUnlock()
+	peers := []string{}
+
+	for _, p := range s.peers {
+		peers = append(peers, p.listenAddr)
+	}
+	return peers
 }
 
 func init() {

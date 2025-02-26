@@ -8,8 +8,9 @@ import (
 )
 
 type Peer struct {
-	conn     net.Conn
-	Outbound bool
+	conn       net.Conn
+	Outbound   bool
+	listenAddr string
 }
 
 func (p *Peer) Send(data []byte) error {

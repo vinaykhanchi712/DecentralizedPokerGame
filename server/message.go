@@ -9,6 +9,7 @@ type Handshake struct {
 	GameVariant GameVariant
 	Version     string
 	GameStatus  GameStatus
+	ListenAddr  string
 }
 
 type MessagePeerList struct {

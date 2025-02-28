@@ -1,8 +1,17 @@
 package server
 
+import "DPokerGame/deck"
+
 type Message struct {
 	From    string
 	Payload any
+}
+
+func NewMessage(from string, payload any) *Message {
+	return &Message{
+		From:    from,
+		Payload: payload,
+	}
 }
 
 type Handshake struct {
@@ -14,4 +23,8 @@ type Handshake struct {
 
 type MessagePeerList struct {
 	Peers []string
+}
+
+type MessageCards struct {
+	Deck deck.Deck
 }

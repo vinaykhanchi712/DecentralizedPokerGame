@@ -1,9 +1,11 @@
 package server
 
-import "DPokerGame/deck"
-
 type Message struct {
 	From    string
+	Payload any
+}
+type BroadcastTo struct {
+	To      []string
 	Payload any
 }
 
@@ -25,6 +27,6 @@ type MessagePeerList struct {
 	Peers []string
 }
 
-type MessageCards struct {
-	Deck deck.Deck
+type MessageEncDeck struct {
+	Deck [][]byte
 }

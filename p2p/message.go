@@ -1,4 +1,4 @@
-package server
+package p2p
 
 type Message struct {
 	From    string
@@ -29,4 +29,26 @@ type MessagePeerList struct {
 
 type MessageEncDeck struct {
 	Deck [][]byte
+}
+
+type MessageReady struct{}
+
+func (msg MessageReady) String() string {
+	return "MSG: READY"
+}
+
+type MessagePreFlop struct {
+}
+
+func (msg MessagePreFlop) String() string {
+	return "MSG: PreFlop"
+}
+
+type MessagePlayerAction struct {
+	//current status of the player
+	CurrentGameStatus GameStatus
+	//action took by the player
+	Action PlayerAction
+	//value of the bet, if any
+	Value int
 }

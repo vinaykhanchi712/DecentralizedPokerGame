@@ -1,4 +1,4 @@
-package server
+package p2p
 
 import (
 	"bytes"
@@ -30,9 +30,10 @@ func (g *GameVariant) string() string {
 }
 
 type ServerConfig struct {
-	Version     string
-	ListenAddr  string
-	GameVariant GameVariant
+	Version       string
+	ListenAddr    string
+	ApiListenAddr string
+	GameVariant   GameVariant
 }
 
 type Server struct {
@@ -44,7 +45,8 @@ type Server struct {
 	msgChan      chan *Message
 	delPeer      chan *Peer
 	broadcastch  chan BroadcastTo
-	GameState    *GameState
+
+	GameState *Game
 }
 
 func NewServer(cnf ServerConfig) *Server {
@@ -57,16 +59,21 @@ func NewServer(cnf ServerConfig) *Server {
 		broadcastch:  make(chan BroadcastTo, 100),
 	}
 
-	s.GameState = NewGameState(s.ListenAddr, s.broadcastch)
-
-	// TO DO -----------------------hardcoded for now
-	if s.ListenAddr == ":3000" {
-		s.GameState.isDealer = true
-	}
+	s.GameState = NewGame(s.ListenAddr, s.broadcastch)
 
 	s.transport = NewTCPTransport(cnf.ListenAddr)
 	s.transport.addPeer = s.addPeer
 	s.transport.delPeer = s.delPeer
+
+	go func() {
+		apiServer := NewAPIServer(cnf.ApiListenAddr, s.GameState)
+		logrus.WithFields(logrus.Fields{
+			"port": cnf.ApiListenAddr,
+		}).Info("STARTING API SERVER==>")
+		apiServer.Run()
+
+	}()
+
 	return s
 }
 
@@ -142,12 +149,34 @@ func (s *Server) handleMessage(msg *Message) error {
 		return s.handlePeerList(v)
 	case MessageEncDeck:
 		return s.handleEncDeck(msg.From, v)
+	case MessageReady:
+		return s.handleMessageReady(msg.From)
+	case MessagePreFlop:
+		return s.handlePreFlopMessage(msg.From)
 	}
 	return nil
 }
 
+func (s *Server) handlePreFlopMessage(from string) error {
+	s.GameState.SetStatus(Status_PreFlop)
+	return nil
+}
+
+/*
+-> Player from other server says they are ready, we receive that and send signal
+to set them ready in our server too.
+*/
+func (s *Server) handleMessageReady(from string) error {
+	s.GameState.SetPlayerReady(from)
+	return nil
+}
+
 func (s *Server) handleEncDeck(from string, msg MessageEncDeck) error {
-	logrus.WithFields(logrus.Fields{"msg": msg}).Info("[Server]encrpyted msg")
+
+	logrus.WithFields(logrus.Fields{
+		"msg":  msg,
+		"from": from,
+	}).Info("[Server]rec enc deck")
 
 	return s.GameState.ShuffleAndEnc(from, msg.Deck)
 }
@@ -182,7 +211,7 @@ func (s *Server) SendHandshake(p *Peer) error {
 	hs := &Handshake{
 		GameVariant: s.GameVariant,
 		Version:     s.Version,
-		GameStatus:  s.GameState.GameStatus,
+		GameStatus:  s.GameState.CurrentStatus,
 		ListenAddr:  s.ListenAddr,
 	}
 
@@ -272,8 +301,8 @@ func (s *Server) handleNewPeer(peer *Peer) error {
 		}
 	}
 	s.addPeerWithLock(peer)
-	logrus.Info("Handshake Sucessfull->New Player connected: ", peer.listenAddr, " to:", s.ListenAddr)
-	s.GameState.AddPlayer(peer.listenAddr, hs.GameStatus)
+	logrus.Info("Handshake Sucessfull->New Player connected:=> ", peer.listenAddr, " with status=> ", hs.GameStatus, " to [ WE ]:", s.ListenAddr)
+	s.GameState.AddPlayer(peer.listenAddr)
 	return nil
 }
 
@@ -319,4 +348,7 @@ func (s *Server) Broadcast(bt BroadcastTo) error {
 func init() {
 	gob.Register(MessagePeerList{})
 	gob.Register(MessageEncDeck{})
+	gob.Register(MessageReady{})
+	gob.Register(MessagePreFlop{})
+	gob.Register(MessagePlayerAction{})
 }

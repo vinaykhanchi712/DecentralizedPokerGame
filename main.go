@@ -1,67 +1,54 @@
 package main
 
 import (
-	"DPokerGame/deck"
-	"DPokerGame/server"
-	"fmt"
+	"DPokerGame/p2p"
 	"log"
+	"net/http"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 func main() {
 
-	deck := deck.NewDeck()
-	deck.Shuffle()
-	fmt.Println(deck)
-	s := server.NewServer(server.ServerConfig{
-		Version:     "VK POKER V0.0.1",
-		ListenAddr:  ":3000",
-		GameVariant: server.TexasHoldem,
-	})
-	go s.Start()
-	remoteServer := server.NewServer(server.ServerConfig{
-		Version:     "VK POKER V0.0.1",
-		ListenAddr:  ":4000",
-		GameVariant: server.TexasHoldem,
-	})
+	first := makeServerAndStart(":3000", ":3001")
 
-	go remoteServer.Start()
+	second := makeServerAndStart(":4000", ":40001")
+
+	three := makeServerAndStart(":5000", ":5001")
+
+	four := makeServerAndStart(":6000", ":6001")
+
 	time.Sleep(500 * time.Millisecond)
-	if err := remoteServer.Connect(":3000"); err != nil {
+
+	if err := second.Connect(first.ListenAddr); err != nil {
 		log.Fatal(err)
 	}
 
-	otherServer := server.NewServer(server.ServerConfig{
-		Version:     "VK POKER V0.0.1",
-		ListenAddr:  ":5000",
-		GameVariant: server.TexasHoldem,
-	})
-	go otherServer.Start()
-	time.Sleep(500 * time.Millisecond)
-	if err := otherServer.Connect(":4000"); err != nil {
+	if err := three.Connect(second.ListenAddr); err != nil {
 		log.Fatal(err)
 	}
 
-	// four := server.NewServer(server.ServerConfig{
-	// 	Version:     "VK POKER V0.0.1",
-	// 	ListenAddr:  ":6000",
-	// 	GameVariant: server.TexasHoldem,
-	// })
-	// go four.Start()
-	// time.Sleep(500 * time.Millisecond)
-	// if err := four.Connect(":5000"); err != nil {
-	// 	log.Fatal(err)
-	// }
+	if err := four.Connect(three.ListenAddr); err != nil {
+		log.Fatal(err)
+	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	logrus.WithFields(logrus.Fields{
-		"A": s.PeerConnectionList(),
-		"B": remoteServer.PeerConnectionList(),
-		"C": otherServer.PeerConnectionList(),
-	}).Info("Connections are ")
+	go func() {
+		time.Sleep(2 * time.Second)
+		http.Get("http://localhost" + first.ApiListenAddr + "/ready/1")
+		http.Get("http://localhost" + second.ApiListenAddr + "/ready/2")
+		http.Get("http://localhost" + three.ApiListenAddr + "/ready/3")
+		http.Get("http://localhost" + four.ApiListenAddr + "/ready/4")
+	}()
 
 	select {}
+}
+
+func makeServerAndStart(addr, apiAddr string) *p2p.Server {
+	s := p2p.NewServer(p2p.ServerConfig{
+		Version:       "VK POKER V0.0.1",
+		ListenAddr:    addr,
+		GameVariant:   p2p.TexasHoldem,
+		ApiListenAddr: apiAddr,
+	})
+	go s.Start()
+	return s
 }

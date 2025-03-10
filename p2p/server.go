@@ -153,8 +153,20 @@ func (s *Server) handleMessage(msg *Message) error {
 		return s.handleMessageReady(msg.From)
 	case MessagePreFlop:
 		return s.handlePreFlopMessage(msg.From)
+	case MessagePlayerAction:
+		return s.handlePlayerAction(msg.From, v)
 	}
 	return nil
+}
+
+func (s *Server) handlePlayerAction(from string, msg MessagePlayerAction) error {
+	logrus.WithFields(logrus.Fields{
+		"we":      s.ListenAddr,
+		"from":    from,
+		"payload": msg,
+	}).Info("Rec player action")
+
+	return s.GameState.handlePlayerAction(from, msg)
 }
 
 func (s *Server) handlePreFlopMessage(from string) error {

@@ -11,7 +11,7 @@ func main() {
 
 	first := makeServerAndStart(":3000", ":3001")
 
-	second := makeServerAndStart(":4000", ":40001")
+	second := makeServerAndStart(":4000", ":4001")
 
 	three := makeServerAndStart(":5000", ":5001")
 

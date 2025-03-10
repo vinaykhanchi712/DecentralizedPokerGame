@@ -18,6 +18,10 @@ func (g GameStatus) String() string {
 		return "PLAYER READY"
 	case Status_Dealing:
 		return "DEALING"
+	case Status_Folded:
+		return "FOLDED"
+	case Status_Check:
+		return "CHECKED"
 	case Status_PreFlop:
 		return "PREFLOP"
 	case Status_Flop:
@@ -36,6 +40,8 @@ const (
 	Status_Ready
 	Status_Dealing
 	Status_PreFlop
+	Status_Folded
+	Status_Check
 	Status_Flop
 	Status_Turn
 	Status_River

@@ -34,8 +34,7 @@ func (a *AtomicInt) Get() int32 {
 }
 
 func (a *AtomicInt) Increment() {
-	curr := a.Get()
-	a.Set(curr + 1)
+	a.Set(a.Get() + 1)
 }
 
 type PlayerActionRec struct {
@@ -132,6 +131,25 @@ func NewGame(addr string, broadcast chan BroadcastTo) *Game {
 	return game
 }
 
+func (g *Game) getNextGameStatus() GameStatus {
+	switch g.CurrentStatus {
+	case Status_PreFlop:
+		return Status_Flop
+	case Status_Flop:
+		return Status_Turn
+	case Status_Turn:
+		return Status_River
+	default:
+		panic("invakid game status")
+	}
+}
+
+func (g *Game) passTurnToNextPlayer() {
+	//TODO (@VinayKhanchi) only pass to next ready player.
+	g.CurrentPlayerTurn.Increment()
+	g.CurrentPlayerTurn.Set(g.CurrentPlayerTurn.Get() % int32(g.PlayerList.Len()))
+}
+
 func (g *Game) getCurrentDealerAddr() (string, bool) {
 
 	currentDealer := g.PlayerList[g.CurrentDealer.Get()]
@@ -148,8 +166,18 @@ func (g *Game) handlePlayerAction(from string, action MessagePlayerAction) error
 	if !g.canTakeAction(from) {
 		return fmt.Errorf("player (%s) taking action before his turn", from)
 	}
+
+	if action.CurrentGameStatus != g.CurrentStatus {
+		return fmt.Errorf("player (%s) has not the correct game status (%s)", from, action.CurrentGameStatus)
+	}
+
 	g.RecvPlayerAction.addAction(from, action.Action)
-	g.CurrentPlayerTurn.Increment()
+	g.passTurnToNextPlayer()
+	//change status if round completed
+	if g.CurrentPlayerTurn.Get() == g.CurrentDealer.Get() {
+		g.SetStatus(g.getNextGameStatus())
+	}
+
 	return nil
 }
 
@@ -162,7 +190,7 @@ func (g *Game) TakeAction(action PlayerAction, val int) (err error) {
 
 	defer func() {
 		if err == nil {
-			g.CurrentPlayerTurn.Increment()
+			g.passTurnToNextPlayer()
 		}
 	}()
 
@@ -182,6 +210,10 @@ func (g *Game) TakeAction(action PlayerAction, val int) (err error) {
 	}
 
 	g.broadcastPlayerActionToOtherPlayers(action, val)
+	//change status of for next round
+	if g.PlayerList[g.GetNextPositionOnTable()] == g.PlayerList[g.CurrentDealer.Get()] {
+		g.SetStatus(g.getNextGameStatus())
+	}
 
 	return
 }
@@ -231,7 +263,7 @@ atomically set game status
 func (g *Game) setStatus(status GameStatus) {
 
 	if status == Status_PreFlop {
-		g.CurrentPlayerTurn.Increment()
+		g.passTurnToNextPlayer()
 	}
 	//only update status when status if different
 	if g.CurrentStatus != status {
